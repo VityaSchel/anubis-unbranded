@@ -1,0 +1,362 @@
+name: Fork
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "What to build (auto builds a missing release first, then main)"
+        type: choice
+        options: [auto, release, main]
+        default: auto
+      release:
+        description: "Upstream release tag (default: latest stable)"
+      force:
+        description: "Retry a build that failed in the last day"
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: fork
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+env:
+  UPSTREAM: https://github.com/TecharoHQ/anubis.git
+  UPSTREAM_REPO: TecharoHQ/anubis
+  UPSTREAM_SIGNING_KEYS: https://github.com/Xe.gpg
+  PATCH: ${{ github.sha }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      kind: ${{ steps.plan.outputs.kind }}
+      base: ${{ steps.plan.outputs.base }}
+      error: ${{ steps.plan.outputs.error }}
+      key: ${{ steps.plan.outputs.key }}
+      patch-id: ${{ steps.plan.outputs.patch-id }}
+      tag: ${{ steps.plan.outputs.tag }}
+      release: ${{ steps.plan.outputs.release }}
+      latest: ${{ steps.plan.outputs.latest }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target }}
+          INPUT_RELEASE: ${{ inputs.release }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          git fetch --quiet --no-tags "$UPSTREAM" main
+          upstream=$(git rev-parse FETCH_HEAD)
+          if ! git merge-base --is-ancestor HEAD^ "$upstream"; then
+            echo "::error::main must be an upstream commit plus exactly one fork commit"
+            exit 1
+          fi
+          patch_id=$(git diff -U0 HEAD^ HEAD -- . ':!*_templ.go' ':!docs' ':!.github' | git patch-id --stable | cut -d' ' -f1)
+          commit_id=$(git diff HEAD^ HEAD | git patch-id --stable | cut -d' ' -f1)
+
+          latest=$(gh api "repos/$UPSTREAM_REPO/releases/latest" --jq .tag_name)
+          tag=${INPUT_RELEASE:-$latest}
+          prerelease=$(gh api "repos/$UPSTREAM_REPO/releases/tags/$tag" --jq .prerelease)
+          git fetch --quiet --no-tags "$UPSTREAM" "refs/tags/$tag:refs/upstream-tags/$tag"
+          tag_commit=$(git rev-parse "refs/upstream-tags/$tag^{commit}")
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
+          keys=$(curl -fsSL "$UPSTREAM_SIGNING_KEYS")
+          gpg --batch --quiet --import <<<"$keys" || true
+          tag_error=""
+          if ! git verify-tag "refs/upstream-tags/$tag" || [ "$(git cat-file tag "refs/upstream-tags/$tag" | sed -n 's/^tag //p;/^$/q')" != "$tag" ]; then
+            tag_error="Upstream tag $tag is not a tag object named $tag signed by a key from $UPSTREAM_SIGNING_KEYS"
+          fi
+
+          release=$(git tag --list "$tag" "$tag-fork.*" --sort=-v:refname | head -1)
+          release=${release:-$tag}
+          built_patch=$(git for-each-ref "refs/tags/$release" --format='%(trailers:key=Patch-Id,valueonly,separator=)')
+          built_upstream=$(git for-each-ref "refs/tags/$release" --format='%(trailers:key=Upstream-Commit,valueonly,separator=)')
+          published=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq --arg tag "$release" 'any(.[]; .tag_name == $tag and (.draft | not))')
+          outdated=$([ "$built_patch" != "$patch_id" ] || [ "$built_upstream" != "$tag_commit" ] && echo true || echo false)
+          if [ "$published" = true ] && [ "$outdated" = true ]; then
+            [[ $release =~ -fork\.([0-9]+)$ ]] && build=${BASH_REMATCH[1]} || build=1
+            release=$tag-fork.$((build + 1))
+          fi
+
+          kind="" base="" error="" key=""
+          choose() {
+            local id="$1-$2-$commit_id" failures
+            failures=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=failed-$id" --jq '[.artifacts[] | select(.expired | not)] | length')
+            if [ "$FORCE" != true ] && [ "$failures" != 0 ]; then
+              echo "::warning::Skipping $1: it failed for upstream $2 with this fork commit in the last day. Fix the commit, or run with force to retry now."
+              return
+            fi
+            kind=$1 base=$2 error=$3 key=$id
+          }
+          if [ "$TARGET" != main ] && { [ "$published" != true ] || [ "$outdated" = true ]; }; then
+            choose release "$tag_commit" "$tag_error"
+          fi
+          if [ -z "$kind" ] && [ "$TARGET" != release ] && [ "$(git rev-parse HEAD^)" != "$upstream" ]; then
+            choose main "$upstream" ""
+          fi
+
+          {
+            echo "kind=$kind"
+            echo "base=$base"
+            echo "error=$error"
+            echo "key=$key"
+            echo "patch-id=$patch_id"
+            echo "tag=$tag"
+            echo "release=$release"
+            echo "latest=$([ "$tag" = "$latest" ] && echo true || echo false)"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Upstream main \`$upstream\`, release \`$tag\` (fork \`$release\`), building: ${kind:-nothing}" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.kind != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      KIND: ${{ needs.plan.outputs.kind }}
+      BASE: ${{ needs.plan.outputs.base }}
+      RELEASE: ${{ needs.plan.outputs.release }}
+      HUSKY: "0"
+    steps:
+      - name: Check upstream tag
+        if: needs.plan.outputs.error != ''
+        env:
+          ERROR: ${{ needs.plan.outputs.error }}
+        run: |
+          echo "::error::$ERROR"
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "stable"
+          cache: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+          target: wasm32-unknown-unknown
+      - uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
+
+      - name: Apply fork commit
+        run: |
+          cp .github/fork/apply.sh "$RUNNER_TEMP/apply.sh"
+          git fetch --quiet --no-tags "$UPSTREAM" "$BASE"
+          "$RUNNER_TEMP/apply.sh" "$BASE" "$PATCH"
+          mkdir -p "$RUNNER_TEMP/out"
+          git bundle create -q "$RUNNER_TEMP/out/commit.bundle" "$BASE..HEAD"
+
+      - name: Test
+        run: |
+          npm ci
+          npm run test
+          if [ -n "$(git status --porcelain)" ]; then
+            git status
+            echo "::error::Generated assets differ from the committed ones"
+            exit 1
+          fi
+
+      - name: Build release binaries
+        if: env.KIND == 'release'
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          git tag -f "$RELEASE"
+          out=$RUNNER_TEMP/out
+          epoch=$(git log -1 --format=%ct)
+          go_build=(go build -trimpath -ldflags '-s -w -extldflags "-static"')
+          mkdir -p "$out/dist"
+          go version > "$out/go-version"
+          for target in freebsd/amd64 freebsd/arm64 linux/amd64 linux/arm64 linux/ppc64le linux/riscv64 netbsd/amd64 netbsd/arm64 windows/amd64 windows/arm64; do
+            export GOOS=${target%/*} GOARCH=${target#*/}
+            exe=$(go env GOEXE)
+            name=anubis-${RELEASE#v}-$GOOS-$GOARCH
+            dir=$RUNNER_TEMP/pkg/$name
+            "${go_build[@]}" -o "$dir/anubis$exe" ./cmd/anubis
+            "${go_build[@]}" -o "$dir/anubis-robots2policy$exe" ./cmd/robots2policy
+            cp LICENSE README.md "$dir/"
+            find "$dir" -exec touch -d "@$epoch" {} +
+            if [ "$GOOS" = windows ]; then
+              (cd "$RUNNER_TEMP/pkg" && find "$name" | sort | TZ=UTC zip -X -q -@ "$out/dist/$name.zip")
+            else
+              tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$epoch" -C "$RUNNER_TEMP/pkg" -cf - "$name" | gzip -n > "$out/dist/$name.tar.gz"
+            fi
+          done
+          (cd "$out/dist" && sha256sum -- * > SHA256SUMS)
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
+      attestations: write
+    env:
+      KIND: ${{ needs.plan.outputs.kind }}
+      BASE: ${{ needs.plan.outputs.base }}
+      PATCH_ID: ${{ needs.plan.outputs.patch-id }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      RELEASE: ${{ needs.plan.outputs.release }}
+      LATEST: ${{ needs.plan.outputs.latest }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+      GH_REPO: ${{ github.repository }}
+      GIT_COMMITTER_NAME: github-actions[bot]
+      GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.FORK_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FORK_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: build
+          path: ${{ runner.temp }}/build
+
+      - name: Push
+        id: push
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          reject() {
+            echo "::error::The built commit $1"
+            exit 1
+          }
+          git fetch --quiet --no-tags "$UPSTREAM" "$BASE"
+          git fetch --quiet "$RUNNER_TEMP/build/commit.bundle" HEAD
+          sha=$(git rev-parse FETCH_HEAD)
+          [ "$(git rev-list --parents -1 "$sha")" = "$sha $BASE" ] || reject "is not a single commit on upstream $BASE"
+          [ "$(git log -1 --format=%B "$sha")" = "$(git log -1 --format=%B "$PATCH")" ] || reject "has a different message than the fork commit"
+          expected=$(git merge-tree --write-tree --merge-base "$PATCH^" "$BASE" "$PATCH" | head -1) || true
+          git diff --no-renames --name-only -z "$expected" "$sha" | while IFS= read -r -d '' path; do
+            source=${path%_templ.go}.templ
+            if ! [[ $path =~ ^web/[^/]+_templ\.go$ ]]; then
+              reject "changes $path beyond regenerating templates"
+            elif git cat-file -e "$sha:$source" 2>/dev/null; then
+              [ "$(git ls-tree --format='%(objectmode)' "$sha" -- "$path")" = 100644 ] || reject "has a non-regular $path"
+            elif git cat-file -e "$sha:$path" 2>/dev/null; then
+              reject "has $path without $source"
+            fi
+          done
+
+          gh auth setup-git
+          if [ "$KIND" = main ]; then
+            git push --force-with-lease="main:$PATCH" origin "$sha:refs/heads/main"
+          else
+            git tag -f -a "$RELEASE" "$sha" -m "$RELEASE" -m "Upstream-Commit: $BASE
+          Patch-Id: $PATCH_ID"
+            git push --force origin "refs/tags/$RELEASE"
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Pushed $KIND \`$sha\` on upstream \`$BASE\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: env.KIND == 'release'
+        with:
+          subject-path: ${{ runner.temp }}/build/dist/*
+
+      - name: Publish release
+        if: env.KIND == 'release'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SHA: ${{ steps.push.outputs.sha }}
+        run: |
+          dist=$RUNNER_TEMP/build/dist
+          superseded="> [!WARNING]
+          > Superseded. See the [latest release](https://github.com/$GITHUB_REPOSITORY/releases/latest).
+
+          "
+          notes="Upstream [$TAG](https://github.com/$UPSTREAM_REPO/releases/tag/$TAG) with the fork commit [\`${SHA:0:12}\`](https://github.com/$GITHUB_REPOSITORY/commit/$SHA) on top.
+
+          Built with $(cat "$RUNNER_TEMP/build/go-version"). Verify a download with \`gh release verify-asset $RELEASE <file> -R $GITHUB_REPOSITORY\` and \`gh attestation verify <file> -R $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/fork.yml\`."
+          if [ "$LATEST" != true ]; then
+            notes=$superseded$notes
+          fi
+          flags=(--latest="$LATEST" --prerelease="$PRERELEASE")
+          if ! gh release view "$RELEASE" >/dev/null 2>&1; then
+            title=$(gh api "repos/$UPSTREAM_REPO/releases/tags/$TAG" --jq '.name // empty')
+            if [ "$RELEASE" != "$TAG" ]; then title="${title:-$TAG} ($RELEASE)"; fi
+            gh release create "$RELEASE" --draft --verify-tag --title "${title:-$TAG}" --notes ""
+          fi
+          gh release upload "$RELEASE" "$dist"/* --clobber
+          gh release edit "$RELEASE" --notes "$notes" --draft=false "${flags[@]}"
+
+          if [ "$LATEST" = true ]; then
+            gh release list --limit 100 --json tagName --jq '.[].tagName' | while read -r old; do
+              if [ "$old" = "$RELEASE" ]; then continue; fi
+              body=$(gh release view "$old" --json body --jq .body)
+              if [[ "$body" != "> [!WARNING]"* ]]; then
+                gh release edit "$old" --notes "$superseded$body"
+              fi
+            done
+          fi
+
+  record-failure:
+    needs: [plan, build, publish]
+    if: failure() && needs.plan.outputs.key != ''
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - run: echo "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/run"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: failed-${{ needs.plan.outputs.key }}
+          path: ${{ runner.temp }}/run
+          retention-days: 1
+
+  maintain:
+    needs: publish
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - name: Disable upstream workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow list --all --limit 1000 --json id,path,state \
+            --jq '.[] | select(.state == "active" and .path != ".github/workflows/fork.yml") | .id' |
+            xargs -r -n1 gh workflow disable
+      - if: github.event_name == 'schedule'
+        uses: liskin/gh-workflow-keepalive@f72ff1a1336129f29bf0166c0fd0ca6cf1bcb38c # v1.2.1

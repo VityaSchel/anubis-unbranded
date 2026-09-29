@@ -55,6 +55,7 @@ func NewLocalizationService() *LocalizationService {
 				loadedAny = true
 			}
 		}
+		loadOverlay(bundle)
 
 		if !loadedAny {
 			// If no files were loaded successfully, create minimal service

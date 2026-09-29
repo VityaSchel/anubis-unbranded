@@ -1,0 +1,70 @@
+# Custom images, styles and text
+
+The variables below replace parts of the pages Anubis renders; anything you don't provide keeps the default. The installation guide marks them BotStopper-only, but they work in this build; BotStopper's `ASSET_LOOKUP_HEADER` and `USE_TEMPLATES` do not.
+
+| Environment variable | Effect                                     |
+| :------------------- | :----------------------------------------- |
+| `OVERLAY_FOLDER`     | Directory with the files below             |
+| `CHALLENGE_TITLE`    | Title of challenge pages in every language |
+| `ERROR_TITLE`        | Title of error pages in every language     |
+
+```text
+$OVERLAY_FOLDER
+├── footer.html          # HTML replacing the footer's content
+├── locales
+│   └── en.json          # server-rendered text
+└── static               # the only folder served to visitors
+    ├── css
+    │   └── custom.css   # loaded after the default styles
+    └── img
+        ├── happy.webp   # challenge passed
+        ├── pensive.webp # challenge running
+        └── reject.webp  # error or denial
+```
+
+`static/` has BotStopper's layout and is served at `BASE_PREFIX` + `/.within.website/x/cmd/anubis/static/`, so reference fonts and other files from `custom.css` with relative URLs such as `url("../fonts/oswald.woff2")`.
+
+## Styles
+
+Most colors and fonts are CSS variables. Values you set apply in light and dark mode alike; unset ones keep their light and dark defaults:
+
+```css
+:root {
+  --background: #ffffff;
+  --text: #1d2021;
+  --link-foreground: #0969da;
+  --link-background: transparent;
+  --preformatted-background: #f0f0f0;
+  --body-sans-font: system-ui, sans-serif;
+}
+
+#progress {
+  outline-color: #0969da;
+}
+
+.bar-inner {
+  background-color: #0969da;
+}
+```
+
+When the check finishes, `#progress` can turn into a "continue" button with inline colors; override them with `!important`.
+
+## Text
+
+Name files in `locales/` after a built-in language (`en.json`, `de.json`, `pt-BR.json`) and set only the [built-in keys](https://github.com/TecharoHQ/anubis/blob/main/lib/localization/locales/en.json) you want to change; an empty string hides the text:
+
+```json
+{ "making_sure_not_bot": "Checking your browser", "mascot_design": "" }
+```
+
+These change only server-rendered text, and `CHALLENGE_TITLE` and `ERROR_TITLE` take precedence over them. The challenge script's own messages come from `static/locales/<language>.json`, which can only be replaced whole.
+
+## Footer
+
+`footer.html` replaces the footer's content, including the version line and any [imprint](./impressum.mdx) text and link. If you configured an imprint, link it yourself at `BASE_PREFIX` + `/.within.website/x/cmd/anubis/api/imprint`. An empty file leaves the footer empty.
+
+## Notes
+
+- Restart Anubis after changing `footer.html`, `locales` or a title, or adding or removing `custom.css`. Other changes under `static` are served live.
+- Browsers and proxies cache static files for up to a year. The three images and `custom.css` refresh when the Anubis version changes, but not when switching from upstream Anubis of the same version; other files, such as fonts, stay cached even across upgrades. Test changes in a private window.
+- Unreadable files, such as absolute symlinks or symlinks leading outside `OVERLAY_FOLDER`, are logged and skipped.

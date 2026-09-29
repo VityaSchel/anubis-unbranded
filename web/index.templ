@@ -58,6 +58,9 @@ templ base(title string, body templ.Component, impressum *config.Impressum, hone
             transition: width 0.25s ease-in;
         }
     	</style>
+			if customCSS() {
+				<link rel="stylesheet" href={ anubis.BasePrefix + "/.within.website/x/cmd/anubis/static/css/custom.css?cacheBuster=" + anubis.Version }/>
+			}
 			@templ.JSONScript("anubis_version", anubis.Version)
 			@templ.JSONScript("anubis_challenge", challenge)
 			@templ.JSONScript("anubis_base_prefix", anubis.BasePrefix)
@@ -70,6 +73,9 @@ templ base(title string, body templ.Component, impressum *config.Impressum, hone
 			<main>
 				<h1 id="title" class="centered-div">{ title }</h1>
 				@body
+				if footer, ok := customFooter(); ok {
+					<footer>@templ.Raw(string(footer))</footer>
+				} else {
 				<footer>
 					<div class="centered-div">
 						<p>
@@ -87,6 +93,7 @@ templ base(title string, body templ.Component, impressum *config.Impressum, hone
 						<p>{ localizer.T("version_info") } <code>{ anubis.Version }</code>.</p>
 					</div>
 				</footer>
+				}
 			</main>
 		</body>
 	</html>
