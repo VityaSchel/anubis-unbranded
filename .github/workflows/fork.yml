@@ -1,4 +1,4 @@
-name: Fork
+name: Patch Anubis
 
 on:
   workflow_dispatch:
@@ -344,7 +344,7 @@ jobs:
         run: |
           superseded='**Superseded**
           '
-          notes="[Anubis $TAG](https://github.com/$UPSTREAM_REPO/releases/tag/$TAG) · [built on GitHub Actions]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) · [attested]($ATTESTATION)"
+          notes="[Anubis $TAG](https://github.com/$UPSTREAM_REPO/releases/tag/$TAG) · [built on GitHub Actions]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) · [attested]($ATTESTATION)\n\n**Download and [customize Anubis](https://github.com/VityaSchel/anubis-unbranded/wiki/Customizing-Anubis)**."
           if [ "$LATEST" != true ]; then
             notes=$superseded$notes
           fi
