@@ -11,6 +11,7 @@ import (
 
 templ base(title string, body templ.Component, impressum *config.Impressum, honeypot *config.Honeypot, challenge any, ogTags map[string]string, localizer *localization.SimpleLocalizer) {
 	<!DOCTYPE html>
+	@customized(title, body, localizer) {
 	<html lang={ localizer.GetLang() }>
 		<head>
 			<title>{ title }</title>
@@ -90,6 +91,7 @@ templ base(title string, body templ.Component, impressum *config.Impressum, hone
 			</main>
 		</body>
 	</html>
+	}
 }
 
 templ errorPage(message, mail, code string, localizer *localization.SimpleLocalizer) {
@@ -110,6 +112,7 @@ templ errorPage(message, mail, code string, localizer *localization.SimpleLocali
 			<p><a href="/">{ localizer.T("go_home") }</a></p>
 		}
 	</div>
+	@pageKind("error")
 }
 
 templ StaticHappy(localizer *localization.SimpleLocalizer) {
