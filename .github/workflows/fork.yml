@@ -208,6 +208,7 @@ jobs:
           epoch=$(git log -1 --format=%ct)
           go_build=(go build -trimpath -ldflags '-s -w -extldflags "-static"')
           mkdir -p "$out/dist"
+          go run ./cmd/overlay-defaults "$RUNNER_TEMP/overlay-defaults"
           for target in freebsd/amd64 freebsd/arm64 linux/amd64 linux/arm64 linux/ppc64le linux/riscv64 netbsd/amd64 netbsd/arm64 windows/amd64 windows/arm64; do
             export GOOS=${target%/*} GOARCH=${target#*/}
             exe=$(go env GOEXE)
@@ -216,6 +217,7 @@ jobs:
             "${go_build[@]}" -o "$dir/anubis$exe" ./cmd/anubis
             "${go_build[@]}" -o "$dir/anubis-robots2policy$exe" ./cmd/robots2policy
             cp LICENSE README.md "$dir/"
+            cp -R "$RUNNER_TEMP/overlay-defaults" "$dir/overlay-defaults"
             find "$dir" -exec touch -d "@$epoch" {} +
             if [ "$GOOS" = windows ]; then
               (cd "$RUNNER_TEMP/pkg" && find "$name" | sort | TZ=UTC zip -X -q -@ "$out/dist/$name.zip")
