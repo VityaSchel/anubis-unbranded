@@ -68,6 +68,11 @@ jobs:
             exit 1
           fi
           patch=$(git rev-parse HEAD)
+          trusted=$(gh api "repos/$GITHUB_REPOSITORY/commits/$patch" --jq '.commit.verification.verified and (.committer.id == 59040542 or (.committer.id == 19864447 and .author.id == 335734583))')
+          if [ "$trusted" != true ]; then
+            echo "::error::main is neither signed by VityaSchel nor a rebase that GitHub signed for anubis-unbranded-bot"
+            exit 1
+          fi
           patch_id=$(git diff -U0 HEAD^ HEAD -- . ':!*_templ.go' ':!.github' | git patch-id --stable | cut -d' ' -f1)
           commit_id=$(git diff HEAD^ HEAD | git patch-id --stable | cut -d' ' -f1)
 
@@ -237,6 +242,7 @@ jobs:
   publish:
     needs: [plan, build]
     runs-on: ubuntu-24.04
+    environment: release
     permissions:
       contents: read
       actions: write
