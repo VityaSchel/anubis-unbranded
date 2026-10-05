@@ -109,6 +109,7 @@ interface OhNoesParams {
   const image: HTMLImageElement = g("image") as HTMLImageElement;
   const title: HTMLHeadingElement = g("title") as HTMLHeadingElement;
   const progress: HTMLDivElement = g("progress") as HTMLDivElement;
+  image.alt = t("image_alt_pensive");
 
   const anubisVersion = j("anubis_version");
   const basePrefix = j("anubis_base_prefix");
@@ -127,6 +128,7 @@ interface OhNoesParams {
     title.innerHTML = titleMsg;
     status.innerHTML = statusMsg;
     image.src = imageSrc;
+    image.alt = t("image_alt_reject");
     progress.style.display = "none";
   };
 
@@ -259,7 +261,7 @@ interface OhNoesParams {
   } catch (err: any) {
     ohNoes({
       titleMsg: t("calculation_error"),
-      statusMsg: `${t("calculation_error_msg")} ${err.message}`,
+      statusMsg: `${t("calculation_error_msg")} ${String(err.message).replace(/^anubis: /, "")}`,
       imageSrc: imageURL("reject", anubisVersion, basePrefix),
     });
   }

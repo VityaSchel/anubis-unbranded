@@ -11,6 +11,7 @@ import (
 
 templ base(title string, body templ.Component, impressum *config.Impressum, honeypot *config.Honeypot, challenge any, ogTags map[string]string, localizer *localization.SimpleLocalizer) {
 	<!DOCTYPE html>
+	@customized(title, body, localizer) {
 	<html lang={ localizer.GetLang() }>
 		<head>
 			<title>{ title }</title>
@@ -90,11 +91,12 @@ templ base(title string, body templ.Component, impressum *config.Impressum, hone
 			</main>
 		</body>
 	</html>
+	}
 }
 
 templ errorPage(message, mail, code string, localizer *localization.SimpleLocalizer) {
 	<div class="centered-div">
-		<img id="image" alt="Sad Anubis" style="width:100%;max-width:256px;" src={ anubis.BasePrefix + "/.within.website/x/cmd/anubis/static/img/reject.webp?cacheBuster=" + anubis.Version }/>
+		<img id="image" alt={ localizer.T("image_alt_reject") } style="width:100%;max-width:256px;" src={ anubis.BasePrefix + "/.within.website/x/cmd/anubis/static/img/reject.webp?cacheBuster=" + anubis.Version }/>
 		<p>{ message }.</p>
 		if code != "" {
 			<code><pre>{ code }</pre></code>
@@ -110,6 +112,7 @@ templ errorPage(message, mail, code string, localizer *localization.SimpleLocali
 			<p><a href="/">{ localizer.T("go_home") }</a></p>
 		}
 	</div>
+	@pageKind("error")
 }
 
 templ StaticHappy(localizer *localization.SimpleLocalizer) {
@@ -147,7 +150,7 @@ templ bench(localizer *localization.SimpleLocalizer) {
 			></tbody>
 		</table>
 		<div class="centered-div">
-			<img id="image" style="width:100%;max-width:256px;" src={ anubis.BasePrefix + "/.within.website/x/cmd/anubis/static/img/pensive.webp?cacheBuster=" + anubis.Version }/>
+			<img id="image" alt={ localizer.T("image_alt_pensive") } style="width:100%;max-width:256px;" src={ anubis.BasePrefix + "/.within.website/x/cmd/anubis/static/img/pensive.webp?cacheBuster=" + anubis.Version }/>
 			<p id="status" style="max-width:256px">{ localizer.T("loading") }</p>
 			<script async type="module" src={ anubis.BasePrefix + "/.within.website/x/cmd/anubis/static/js/bench.mjs?cacheBuster=" + anubis.Version }></script>
 			<div id="sparkline"></div>
