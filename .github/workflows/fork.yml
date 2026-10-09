@@ -63,14 +63,14 @@ jobs:
         run: |
           git fetch --quiet --no-tags "$UPSTREAM" main
           upstream=$(git rev-parse FETCH_HEAD)
-          if ! git merge-base --is-ancestor HEAD^ "$upstream"; then
-            echo "::error::main must be an upstream commit plus exactly one fork commit"
+          patch=$(git rev-parse HEAD)
+          signer=$(gh api "repos/$GITHUB_REPOSITORY/commits/$patch" --jq 'if (.commit.verification.verified | not) then "" elif .committer.id == 59040542 then "owner" elif .committer.id == 19864447 and .author.id == 335734583 then "bot" else "" end')
+          if [ -z "$signer" ]; then
+            echo "::error::main is neither signed by VityaSchel nor a rebase that GitHub signed for anubis-unbranded-bot"
             exit 1
           fi
-          patch=$(git rev-parse HEAD)
-          trusted=$(gh api "repos/$GITHUB_REPOSITORY/commits/$patch" --jq '.commit.verification.verified and (.committer.id == 59040542 or (.committer.id == 19864447 and .author.id == 335734583))')
-          if [ "$trusted" != true ]; then
-            echo "::error::main is neither signed by VityaSchel nor a rebase that GitHub signed for anubis-unbranded-bot"
+          if [ "$signer" != bot ] && ! git merge-base --is-ancestor HEAD^ "$upstream"; then
+            echo "::error::main must be an upstream commit plus exactly one fork commit (rebase it onto upstream main)"
             exit 1
           fi
           patch_id=$(git diff -U0 HEAD^ HEAD -- . ':!*_templ.go' ':!.github' | git patch-id --stable | cut -d' ' -f1)
