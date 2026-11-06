@@ -1,0 +1,17 @@
+name: Fork
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: gh workflow run fork.yml --repo "$GITHUB_REPOSITORY" --ref ci
+        env:
+          GH_TOKEN: ${{ github.token }}
