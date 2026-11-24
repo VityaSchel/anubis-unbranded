@@ -3,6 +3,7 @@ package localization
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -55,6 +56,7 @@ func NewLocalizationService() *LocalizationService {
 				loadedAny = true
 			}
 		}
+		loadOverlay(bundle)
 
 		if !loadedAny {
 			// If no files were loaded successfully, create minimal service
@@ -116,9 +118,15 @@ type SimpleLocalizer struct {
 	Localizer *i18n.Localizer
 }
 
-// T provides a concise way to localize messages
+// T provides a concise way to localize messages. A message missing from the
+// matched language falls back to English instead of failing the request.
 func (sl *SimpleLocalizer) T(messageID string) string {
-	return sl.Localizer.MustLocalize(&i18n.LocalizeConfig{MessageID: messageID})
+	text, tag, err := sl.Localizer.LocalizeWithTag(&i18n.LocalizeConfig{MessageID: messageID})
+	var notFound *i18n.MessageNotFoundErr
+	if err != nil && (!errors.As(err, &notFound) || tag == language.Und) {
+		panic(err)
+	}
+	return text
 }
 
 // Get the language that is used by the localizer by retrieving a well-known string that is required to be present

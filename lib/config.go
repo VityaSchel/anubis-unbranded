@@ -191,7 +191,7 @@ func New(opts Options) (*Server, error) {
 
 	// Ensure there's no double slash when concatenating BasePrefix and StaticPath
 	stripPrefix := strings.TrimSuffix(anubis.BasePrefix, "/") + anubis.StaticPath
-	registerWithPrefix(anubis.StaticPath, internal.UnchangingCache(internal.NoBrowsing(http.StripPrefix(stripPrefix, http.FileServerFS(web.Static)))), "")
+	registerWithPrefix(anubis.StaticPath, internal.UnchangingCache(internal.NoBrowsing(http.StripPrefix(stripPrefix, web.StaticFiles()))), "")
 
 	if opts.ServeRobotsTXT {
 		registerWithPrefix("/robots.txt", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
